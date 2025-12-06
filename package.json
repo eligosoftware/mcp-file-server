@@ -7,7 +7,7 @@
     "weather": "./build/index.js"
   },
   "scripts": {
-    "build": "tsc && chmod 755 build/index.js"
+    "build": "tsc"
   },
   "files": [
     "build"
@@ -18,10 +18,12 @@
   "description": "",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.9.0",
+    "pdf-parse": "^1.1.4",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/node": "^22.14.1",
+    "@types/pdf-parse": "^1.1.5",
     "typescript": "^5.8.3"
   }
 }

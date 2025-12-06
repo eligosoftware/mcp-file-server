@@ -1,10 +1,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
+import { string, z } from "zod";
+import pdf from "pdf-parse";
+// import file system modules
+import * as fs from "fs/promises";
+import * as path from "path";
 
 const NWS_API_BASE = "https://api.weather.gov";
 const USER_AGENT = "weather-app/1.0";
-
+const DOCUMENT_PATH = "C:\\Users\\mragl\\Documents\\claude_mcp_documents"; 
+  
 // Create server instance
 const server = new McpServer({
   name: "weather",
@@ -214,6 +219,226 @@ server.tool(
       };
     },
   );
+
+  // adding new tools here
+
+  server.tool(
+    // tool endpoint
+    "search-pdf-documents",
+    // tool description
+    "Search PDF documents for relevant information",
+    // tool parameters - the minimal length of the query is 1 character
+    {
+      query: z.string().min(1).describe("Search query to find relevant information in PDF documents"),
+    },
+    // here goes the function
+    async ({ query }) => {
+
+      // it is good idea to put everything in try-catch block
+      try {
+
+        // don't forget to import the package 
+      // first get all files
+      const files = await fs.readdir(DOCUMENT_PATH);
+      // then get all pdf files
+      const pdfFiles = files.filter(file => path.extname(file).toLowerCase() === '.pdf');
+      // if no pdf files found, return appropriate message
+      if (pdfFiles.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "No PDF documents found",
+            },
+          ],
+        };
+      }
+
+      // some pdf files found, now search through them
+
+      // create an array to hold search results
+      const results: string[] = [];
+      // convert query to lower case for case-insensitive search
+      const queryLower = query.toLowerCase();
+
+      // for each pdf file execute the search
+      for (const file of pdfFiles) {
+
+        // each file processing should also be in try-catch block
+        // because if the file is corrupted or unreadable, the for block
+        // should process the next file
+
+        try {
+           // the file path of the file
+        const filePath = path.join(DOCUMENT_PATH, file);
+
+        // the contents of the file
+        const dataBuffer = await fs.readFile(filePath);
+
+        // create a new pdf object from the data buffer
+        const data = await pdf(dataBuffer);
+
+        // extract the text from the pdf
+        const text = data.text;
+
+        // if text contains the query, analyze the lines of the text
+
+        if (text.toLowerCase().includes(queryLower)) {
+
+          // split the text into lines
+          const lines = text.split('\n');
+
+          // find the matching lines
+          const matchingLines = lines.filter(line => line.toLowerCase().includes(queryLower));
+          // actually it the same search logic as above
+
+          // if matching lines found, add them to results
+
+          if (matchingLines.length > 0) {
+            results.push(
+              `\n== ${file} ==\n`+
+              `Matches found: ${matchingLines.length}\n`+
+              // read the first 5 matching lines
+              matchingLines.slice(0, 5).join('\n') +
+              // if more than 5 matches, indicate that
+              (matchingLines.length > 5 ? `\n...and ${matchingLines.length - 5} more matches.\n` : '')
+            );
+          }
+        }
+      }
+        catch(fileError){
+          console.error(`Error processing file ${file}:`, fileError);
+          // continue to the next file
+          continue;
+        }
+
+       
+        }
+
+        // here we return the results
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: results.length > 0 ? 
+                `Search results for query "${query}" in "${pdfFiles.length}" pdf files:\n` + results.join('\n') :
+                `No matches found for query "${query}" in "${pdfFiles.length}" pdf files.`,
+            }
+          ]};
+
+          // example if found
+          // Search results for query "climate" in "3" pdf files:
+          //
+          // == document1.pdf ==
+
+          // Matches found: 2
+          // The climate is changing.
+          // Climate change is a global issue.
+          //
+          // == document2.pdf ==
+          // Matches found: 1
+          // Climate action is needed now.
+
+          // if no matches found
+          // No matches found for query "climate" in "3" pdf files.
+      }
+    
+      catch (error) {
+      console.error("Error searching PDF documents:", error);
+        return {
+          content: [
+            {
+              type: "text",
+              text: "An error occurred while searching PDF documents",
+            },
+          ],
+        };
+      }    }
+  
+    
+    );
+
+    // the second tool for listing the documents
+    server.tool(
+      "list-documents",
+      "List all PDF documents available for search",
+      // no parameters is needed
+      {},
+      async () => {
+       try{
+        const files = await fs.readdir(DOCUMENT_PATH);
+
+        // filter only pdf files
+        const pdfFiles = files.filter(file => path.extname(file).toLowerCase() === '.pdf');
+        if (pdfFiles.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "No PDF documents found",
+              },
+            ],
+          };
+        }
+
+        // the array of fileInfos
+        const fileInfos: string[] = [];
+
+        for (const file of pdfFiles) {
+          const filePath = path.join(DOCUMENT_PATH, file);
+
+          try{
+            // read the contents of the file
+
+            const dataBuffer = await fs.readFile(filePath);
+            // convert to pdf object
+            const data = await pdf(dataBuffer);
+            // read stats
+            const stats = await fs.stat(filePath);
+
+            fileInfos.push(
+              `${file}\n`+
+              `Pages: ${data.numpages}\n`+
+              `Size: ${(stats.size / 1024).toFixed(2)} KB\n`+
+              `Preview: ${data.text.substring(0, 100).replace(/\n/g, ' ')}...`
+            );
+
+          }
+          catch(fileError){
+            // again, each file access should be in try-catch block
+            // if some error occurs, just log it and continue to the next file
+            console.error(`Error accessing file ${file}:`, fileError);
+            continue;
+          }
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Available PDF documents (${fileInfos.length}):\n\n` + fileInfos.join('\n\n'),
+            }]
+        }
+      
+      }
+       catch(error){
+        console.error("Error listing documents:", error);
+
+        // i think this is standard response, expected from the MCP server
+        return {
+          content: [
+            {
+              type: "text",
+              text: "An error occurred while listing documents",
+            },
+          ],
+        };
+       } 
+      }
+    );
+    
+
 
   async function main() {
     const transport = new StdioServerTransport();
